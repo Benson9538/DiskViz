@@ -1,0 +1,9 @@
+build/
+# Qt 產生的檔案
+*.autosave
+# 編譯產生的檔案
+*.o
+*.a
+*.so
+# vscode 設定檔
+.vscode/
