@@ -13,6 +13,8 @@
 #include "core/FileScanner.h"
 #include "core/FileClassifier.h"
 #include "core/SizeCalculator.h"
+#include "core/CacheManager.h"
+#include "core/ScanWorker.h"
 #include "utils/FormatUtils.h"
 #include "utils/DriveUtils.h"
 
@@ -31,6 +33,7 @@ private slots:
     void onSizeReady(const QString& path, qint64 size);
     void onCategoryChanged(int row);
     void onItemExpanded(QTreeWidgetItem* item);
+    void onScanFinished(const std::vector<ScanResult>& results);
 
 private:
     // UI 元件 
@@ -43,19 +46,24 @@ private:
     QLabel*      statusLabel_;    // 底部狀態文字
 
     // 核心模組
-    FileScanner    scanner_;      // 檔案掃描器（值，不是指標）
-    FileClassifier classifier_;   // 分類引擎（值，不是指標）
+    FileScanner     scanner_;      // 檔案掃描器（值，不是指標）
+    FileClassifier  classifier_;   // 分類引擎（值，不是指標）
     SizeCalculator* sizeCalculator_; // 大小計算器
     // SizeCalculator 繼承 QObject，QObject 不能複製，只能用指標
+    CacheManager*   cacheManager_; // 快取管理器
+    ScanWorker*     scanWorker_;   // 掃描工作執行緒
 
     // 函式
     void setupUI();
     void setupSidebar();
     void setupContentArea();
     void populateTree(const std::vector<ScanEntry>& entries);
+    void loadFromCacheAndScan();
+    void populateTreeWithGroups(const std::vector<ScanResult>& results);
 
     // 取得目前勾選的掃描路徑清單
     std::vector<fs::path> getSelectedScanPaths();
+
 
     // 遞迴搜尋整棵樹，找到路徑對應的項目
     // 用於 onSizeReady 更新任意層級的大小顯示

@@ -2,6 +2,8 @@
 #include <QHeaderView>
 #include <iostream>
 
+using namespace std;
+
 class SortableTreeItem : public QTreeWidgetItem {
 public:
     using QTreeWidgetItem::QTreeWidgetItem;
@@ -22,13 +24,104 @@ public:
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , sizeCalculator_(new SizeCalculator(this))
+    , cacheManager_(new CacheManager(this))
+    , scanWorker_(new ScanWorker(this))
 {
     setWindowTitle("DiskViz");
     resize(1280, 800);
     setupUI();
+
+    connect(scanWorker_, &ScanWorker::scanFinished,
+            this,        &MainWindow::onScanFinished);
+
+    if(!cacheManager_->init()){
+        statusLabel_->setText("快取初始化失敗");
+        return;
+    }
+    loadFromCacheAndScan();
 }
 
 MainWindow::~MainWindow() {}
+
+void MainWindow::loadFromCacheAndScan()
+{
+    auto scanPaths = getSelectedScanPaths();
+    if(scanPaths.empty()) return ;
+
+    bool hasAnyCache = false;
+    QDateTime oldestScanTime;
+
+    // 先讀快取，立即顯示
+    vector<ScanResult> cachedResults;
+
+    for(const auto& path : scanPaths){
+        QString qPath = QString::fromStdString(path.string());
+        if(cacheManager_->hasCache(qPath)){
+            hasAnyCache = true;
+            QDateTime t = cacheManager_->lastScanTime(qPath);
+            if(!oldestScanTime.isValid() || t < oldestScanTime) oldestScanTime = t;
+
+            auto cached = cacheManager_->loadEntries(qPath);
+            for(const auto& e : cached){
+                ScanResult r;
+                r.rootPath = fs::path(e.rootPath.toStdString());
+                r.path = fs::path(e.path.toStdString());
+                r.totalSize = e.size;
+                r.isDirectory = e.isDir;
+                r.extension = fs::path(e.path.toStdString()).extension().string();
+                r.category = e.category.toStdString();
+                cachedResults.push_back(r);
+            }
+        }
+    }
+
+    if(hasAnyCache){
+        populateTreeWithGroups(cachedResults);
+        onCategoryChanged(categoryList_->currentRow());
+
+        QString timeStr = oldestScanTime.toString("yyyy/MM/dd hh:mm:ss");
+        statusLabel_->setText("上次更新 : " + timeStr + " ，更新中...");
+    }
+    else statusLabel_->setText("首次掃描中");
+
+    scanButton_->setEnabled(false);
+    scanWorker_->scan(scanPaths);
+}
+
+void MainWindow::onScanFinished(const vector<ScanResult>& results)
+{
+    // 更新畫面
+    contentTree_->clear();
+    populateTreeWithGroups(results);
+    onCategoryChanged(categoryList_->currentRow());
+
+    auto scanPaths = getSelectedScanPaths();
+    for(const auto& path : scanPaths){
+        QString qPath = QString::fromStdString(path.string());
+
+        vector<CachedEntry> toCache;
+        for(const auto& r : results){
+            if(r.path.string().find(path.string()) != 0) continue;
+
+            CachedEntry ce;
+            ce.rootPath = qPath;
+            ce.path = QString::fromStdString(r.path.string());
+            ce.size = r.totalSize;
+            ce.category = QString::fromStdString(r.category);
+            ce.isDir = r.isDirectory;
+            toCache.push_back(ce);
+        }
+
+        if(!toCache.empty()){
+            cacheManager_->saveEntries(qPath, toCache);
+        }
+    }
+
+    QString timeStr = QDateTime::currentDateTime()
+                        .toString("yyyy/MM/dd hh:mm:ss");
+    statusLabel_->setText("已更新 :" + timeStr);
+    scanButton_->setEnabled(true);
+}
 
 void MainWindow::setupUI()
 {
@@ -66,18 +159,21 @@ void MainWindow::setupSidebar()
     scanPathList_->setMaximumHeight(200);
 
     // 取得目前 Windows 使用者的家目錄
-    std::string user = "User";
+    string user = "User";
     fs::path userHome = fs::path("/mnt/c/Users") / user;
 
     // 預設掃描路徑清單（標籤, 路徑）
-    // std::pair：把兩個值打包在一起
-    std::vector<std::pair<std::string, fs::path>> defaultPaths = {
-        { "Documents", userHome / "Documents" },
-        { "Desktop",   userHome / "Desktop"   },
-        { "Downloads", userHome / "Downloads" },
-        { "Pictures",  userHome / "Pictures"  },
-        { "Videos",    userHome / "Videos"    },
-        { "Program Files", fs::path("/mnt/c/Program Files") },
+    // pair：把兩個值打包在一起
+    vector<pair<string, fs::path>> defaultPaths = {
+        { "Documents",          userHome / "Documents"           },
+        { "Desktop",            userHome / "Desktop"             },
+        { "Downloads",          userHome / "Downloads"           },
+        { "Pictures",           userHome / "Pictures"            },
+        { "Videos",             userHome / "Videos"              },
+        { "Music",              userHome / "Music"               },
+        { "AppData Roaming",    userHome / "AppData" / "Roaming" },
+        { "Program Files",      fs::path("/mnt/c/Program Files")       },
+        { "Program Files x86",  fs::path("/mnt/c/Program Files (x86)") },
     };
 
     // C++17 結構化綁定：直接把 pair 解包成有意義的名字
@@ -101,11 +197,11 @@ void MainWindow::setupSidebar()
     // 動態偵測其他磁碟（D槽、E槽等）
     auto drives = DriveUtils::getAvailableDrives();
     for (const auto& drive : drives) {
-        std::string driveName = drive.filename().string();
+        string driveName = drive.filename().string();
         if (driveName == "c") continue;  // C槽已用上面的方式處理
 
-        std::string label = driveName + " 槽";
-        std::transform(label.begin(), label.end(),
+        string label = driveName + " 槽";
+        transform(label.begin(), label.end(),
                         label.begin(), ::toupper);
 
         QListWidgetItem* item = new QListWidgetItem(
@@ -183,9 +279,9 @@ void MainWindow::setupContentArea()
             this,         &MainWindow::onItemExpanded);
 }
 
-std::vector<fs::path> MainWindow::getSelectedScanPaths()
+vector<fs::path> MainWindow::getSelectedScanPaths()
 {
-    std::vector<fs::path> paths;
+    vector<fs::path> paths;
 
     for (int i = 0; i < scanPathList_->count(); ++i) {
         QListWidgetItem* item = scanPathList_->item(i);
@@ -194,7 +290,7 @@ std::vector<fs::path> MainWindow::getSelectedScanPaths()
         if (item->checkState() == Qt::Checked) {
             // data(Qt::UserRole)：取出我們存進去的路徑
             // toString()：轉成 QString
-            // toStdString()：轉成 std::string
+            // toStdString()：轉成 string
             paths.push_back(fs::path(
                 item->data(Qt::UserRole).toString().toStdString()
             ));
@@ -206,7 +302,6 @@ std::vector<fs::path> MainWindow::getSelectedScanPaths()
 
 void MainWindow::onScanClicked()
 {
-    contentTree_->clear();
     statusLabel_->setText("掃描中...");
     scanButton_->setEnabled(false);
 
@@ -219,38 +314,15 @@ void MainWindow::onScanClicked()
         return;
     }
 
-    // 掃描所有選取的路徑，合併結果
-    std::vector<ScanEntry> allEntries;
-    std::vector<fs::path>  dirs;
-
-    for (const auto& path : scanPaths) {
-        auto entries = scanner_.scanTopLevel(path);
-        for (const auto& e : entries) {
-            allEntries.push_back(e);
-            if (e.isDirectory) dirs.push_back(e.path);
-        }
-    }
-
-    populateTree(allEntries);
-    // 掃描完後立即套用當前選擇的類別篩選
-    onCategoryChanged(categoryList_->currentRow());
-
-    // 建立新的 SizeCalculator 開始背景計算
-    sizeCalculator_ = new SizeCalculator(this);
-    connect(sizeCalculator_, &SizeCalculator::sizeReady,
-            this,            &MainWindow::onSizeReady);
-    sizeCalculator_->addPaths(dirs);
-    sizeCalculator_->start();
-
-    statusLabel_->setText("計算大小中...");
+    scanWorker_->scan(scanPaths);
 }
 
-void MainWindow::populateTree(const std::vector<ScanEntry>& entries)
+void MainWindow::populateTree(const vector<ScanEntry>& entries)
 {
     // 依大小排序（大的在上面）
     // Lambda 比較函式：a.totalSize > b.totalSize 代表從大到小
     auto sorted = entries;
-    std::sort(sorted.begin(), sorted.end(),
+    sort(sorted.begin(), sorted.end(),
         [](const ScanEntry& a, const ScanEntry& b) {
             return a.totalSize > b.totalSize;
         }
@@ -292,6 +364,68 @@ void MainWindow::populateTree(const std::vector<ScanEntry>& entries)
     }
 }
 
+void MainWindow::populateTreeWithGroups(
+    const vector<ScanResult>& results)
+{
+    vector<fs::path> rootPaths;
+    for(const auto& r : results){
+        if(std::find(rootPaths.begin(), rootPaths.end(), 
+                r.rootPath) == rootPaths.end())
+            rootPaths.push_back(r.rootPath);
+    }
+
+    for(const auto& root : rootPaths){
+        QTreeWidgetItem* header = new QTreeWidgetItem(contentTree_);
+        header->setExpanded(true);
+        header->setText(0, QString::fromStdString(
+            root.filename().string()));
+        // 橫跨所有欄位
+        header->setFirstColumnSpanned(true); // 橫跨所有欄位
+        header->setBackground(0, QColor(230, 230, 230)); // 灰色
+        header->setFlags(header->flags() & ~Qt::ItemIsSelectable); // 不可選取
+        QFont font;
+        font.setBold(true);
+        header->setFont(0, font);
+
+        vector<ScanResult> group;
+        for(const auto& r : results){
+            if(r.rootPath == root) group.push_back(r);
+        }
+        sort(group.begin(), group.end(),
+            [](const ScanResult& a, const ScanResult& b) {
+                return a.totalSize > b.totalSize;
+        });
+        
+        for(const auto& r : group){
+            FileEntry fe{r.path, (uintmax_t)r.totalSize, r.extension};
+            Category cat = classifier_.classify(fe);
+
+            QTreeWidgetItem* item = new SortableTreeItem(header);
+            item->setText(0, QString::fromStdString(
+                r.path.filename().string()));
+            
+            if(r.isDirectory){
+                item->setText(1, QString::fromStdString(
+                    FormatUtils::formatSize(r.totalSize)));
+                item->setData(1, Qt::UserRole, 
+                    QVariant::fromValue(r.totalSize));
+                item->setChildIndicatorPolicy(
+                    QTreeWidgetItem::ShowIndicator);
+            }
+            else {
+                item->setText(1, QString::fromStdString(
+                    FormatUtils::formatSize(r.totalSize)));
+                item->setData(1, Qt::UserRole, 
+                    QVariant::fromValue(r.totalSize));
+            }
+            item->setText(2, QString::fromStdString(
+                categoryToString(cat)));
+            item->setText(3, QString::fromStdString(
+                r.path.string()));
+        }
+    }   
+}
+
 void MainWindow::onItemExpanded(QTreeWidgetItem* item)
 {
     // 已經載入過就不重複載入
@@ -307,7 +441,7 @@ void MainWindow::onItemExpanded(QTreeWidgetItem* item)
     auto entries = scanner_.scanTopLevel(dirPath);
 
     // 依大小排序
-    std::sort(entries.begin(), entries.end(),
+    sort(entries.begin(), entries.end(),
         [](const ScanEntry& a, const ScanEntry& b) {
             return a.totalSize > b.totalSize;
         }
@@ -343,7 +477,7 @@ void MainWindow::onItemExpanded(QTreeWidgetItem* item)
     }
 
     // 收集子資料夾，啟動背景大小計算
-    std::vector<fs::path> subDirs;
+    vector<fs::path> subDirs;
     for (const auto& e : entries) {
         if (e.isDirectory) subDirs.push_back(e.path);
     }

@@ -18,6 +18,7 @@ add_executable(DiskViz
     src/core/FileClassifier.cpp
     src/core/SizeCalculator.cpp
     src/core/CacheManager.cpp
+    src/core/ScanWorker.cpp
     src/utils/FormatUtils.cpp
     src/utils/DriveUtils.cpp
     src/ui/MainWindow.cpp
