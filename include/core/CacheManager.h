@@ -23,8 +23,11 @@ public:
     explicit CacheManager(QObject* parent = nullptr);
     ~CacheManager();
     
-    // 初始化資料庫(建立資料表)
+    // 初始化資料庫（使用預設 AppData 路徑）
     bool init();
+
+    // 測試用：指定資料庫路徑（傳入 ":memory:" 使用記憶體資料庫）
+    bool init(const QString& dbPath);
 
     // 儲存掃描結果
     void saveEntries(const QString& rootPath,

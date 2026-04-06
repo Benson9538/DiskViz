@@ -24,19 +24,26 @@ bool CacheManager::init()
     // Windows: C:/Users/User/AppData/Roaming/DiskViz
     QString dataDir = QStandardPaths::writableLocation(
         QStandardPaths::AppDataLocation);
-    
+
     // 確保資料目錄存在
     QDir().mkpath(dataDir);
     QString dbPath = dataDir + "/cache.db";
     cout << "[CacheManager] 資料庫路徑 : " << dbPath.toStdString() << endl;
 
-    // 建立 SQLite 連線
-    // DiskVizCache : 連線名稱，避免與其他連線衝突
-    db_ = QSqlDatabase::addDatabase("QSQLITE", "DiskVizCache");
+    return init(dbPath);
+}
+
+bool CacheManager::init(const QString& dbPath)
+{
+    // 避免連線名稱衝突（測試時每個 instance 用不同名稱）
+    static int counter = 0;
+    QString connName = QString("DiskVizCache_%1").arg(counter++);
+
+    db_ = QSqlDatabase::addDatabase("QSQLITE", connName);
     db_.setDatabaseName(dbPath);
 
     if(!db_.open()){
-        cerr << "[CacheManager] 無法開啟資料庫 : " 
+        cerr << "[CacheManager] 無法開啟資料庫 : "
             << db_.lastError().text().toStdString() << endl;
         return false;
     };

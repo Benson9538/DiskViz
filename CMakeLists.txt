@@ -11,8 +11,9 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Charts Sql Network Concurrent)
 
-add_executable(DiskViz
-    src/main.cpp
+# ── 核心模組（library）────────────────────────────────────
+# 抽出來讓測試可以連結，不用把整個 executable 拉進來
+add_library(DiskVizCore STATIC
     src/core/FileScanner.cpp
     src/core/ProgramFilesProvider.cpp
     src/core/FileClassifier.cpp
@@ -22,21 +23,36 @@ add_executable(DiskViz
     src/core/OllamaClassifier.cpp
     src/utils/FormatUtils.cpp
     src/utils/DriveUtils.cpp
-    src/ui/MainWindow.cpp
 )
 
-target_link_libraries(DiskViz PRIVATE
+target_link_libraries(DiskVizCore PUBLIC
     Qt6::Core
-    Qt6::Widgets
-    Qt6::Charts
     Qt6::Sql
     Qt6::Network
     Qt6::Concurrent
 )
 
-target_include_directories(DiskViz PRIVATE
+target_include_directories(DiskVizCore PUBLIC
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/include/core
     ${CMAKE_SOURCE_DIR}/include/utils
+)
+
+# ── 主程式 ────────────────────────────────────────────────
+add_executable(DiskViz
+    src/main.cpp
+    src/ui/MainWindow.cpp
+)
+
+target_link_libraries(DiskViz PRIVATE
+    DiskVizCore
+    Qt6::Widgets
+    Qt6::Charts
+)
+
+target_include_directories(DiskViz PRIVATE
     ${CMAKE_SOURCE_DIR}/include/ui
 )
+
+# ── 測試 ──────────────────────────────────────────────────
+add_subdirectory(tests)

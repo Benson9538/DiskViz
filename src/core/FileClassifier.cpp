@@ -73,9 +73,9 @@ Category FileClassifier::classifyByPath(const fs::path& path) const
         return Category::Downloads;
 
     // pictures / screenshots / photos / camera roll
+    // 注意：不用 "photos" 避免誤判 "photoshop" 等應用程式名稱
     if (pathStr.find("pictures")    != std::string::npos ||
         pathStr.find("screenshots") != std::string::npos ||
-        pathStr.find("photos")      != std::string::npos ||
         pathStr.find("camera roll") != std::string::npos)
         return Category::Image;
 
