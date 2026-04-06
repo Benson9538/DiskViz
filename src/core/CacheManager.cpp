@@ -212,4 +212,23 @@ bool CacheManager::hasCache(const QString& rootPath)
     return false;
 }
 
+void CacheManager::updateCategory(const QString& path, const QString& category)
+{
+    QSqlQuery query(db_);
+
+    // UPDATE 只改一欄，不需要重新寫整筆資料
+    query.prepare(R"(
+        UPDATE scan_entries
+        SET category = :cat
+        WHERE path = :path
+    )");
+    query.bindValue(":cat",  category);
+    query.bindValue(":path", path);
+
+    if (!query.exec()) {
+        cerr << "[CacheManager] updateCategory 失敗: "
+             << query.lastError().text().toStdString() << "\n";
+    }
+}
+
 #include "moc_CacheManager.cpp"

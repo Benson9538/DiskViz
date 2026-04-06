@@ -9,7 +9,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Charts Sql)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Charts Sql Network)
 
 add_executable(DiskViz
     src/main.cpp
@@ -19,6 +19,7 @@ add_executable(DiskViz
     src/core/SizeCalculator.cpp
     src/core/CacheManager.cpp
     src/core/ScanWorker.cpp
+    src/core/OllamaClassifier.cpp
     src/utils/FormatUtils.cpp
     src/utils/DriveUtils.cpp
     src/ui/MainWindow.cpp
@@ -29,6 +30,7 @@ target_link_libraries(DiskViz PRIVATE
     Qt6::Widgets
     Qt6::Charts
     Qt6::Sql
+    Qt6::Network
 )
 
 target_include_directories(DiskViz PRIVATE

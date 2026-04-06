@@ -7,3 +7,5 @@ build/
 *.so
 # vscode 設定檔
 .vscode/
+.env
+notes/

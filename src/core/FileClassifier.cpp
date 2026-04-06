@@ -66,19 +66,39 @@ Category FileClassifier::classifyByPath(const fs::path& path) const
     std::transform(pathStr.begin(), pathStr.end(),
                     pathStr.begin(), ::tolower);
 
-    // 優先判斷 Downloads 資料夾
+    // ── Windows 標準資料夾（路徑本身就是分類資訊）──────────
+    // 優先順序最高，放在所有其他判斷之前
+
     if (pathStr.find("downloads") != std::string::npos)
         return Category::Downloads;
-    // std::string::npos：「找不到」的意思
-    // != npos 就是「有找到」
 
-    // 遊戲相關路徑關鍵字
+    // pictures / screenshots / photos / camera roll
+    if (pathStr.find("pictures")    != std::string::npos ||
+        pathStr.find("screenshots") != std::string::npos ||
+        pathStr.find("photos")      != std::string::npos ||
+        pathStr.find("camera roll") != std::string::npos)
+        return Category::Image;
+
+    // videos / movies
+    if (pathStr.find("videos") != std::string::npos ||
+        pathStr.find("movies") != std::string::npos)
+        return Category::Video;
+
+    // music
+    if (pathStr.find("music") != std::string::npos)
+        return Category::Music;
+
+    // documents
+    if (pathStr.find("documents") != std::string::npos)
+        return Category::Document;
+
+    // ── 遊戲相關路徑關鍵字 ──────────────────────────────
     for (const auto& kw : {"steam", "epic games", "rockstar",
                             "riot", "ubisoft", "gog"})
         if (pathStr.find(kw) != std::string::npos)
             return Category::Game;
 
-    // 工作軟體相關路徑關鍵字
+    // ── 工作軟體相關路徑關鍵字 ──────────────────────────
     for (const auto& kw : {"office", "adobe", "autodesk",
                             "slack", "zoom", "docker"})
         if (pathStr.find(kw) != std::string::npos)

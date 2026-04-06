@@ -17,6 +17,7 @@
 #include "core/SizeCalculator.h"
 #include "core/CacheManager.h"
 #include "core/ScanWorker.h"
+#include "core/OllamaClassifier.h"
 #include "utils/FormatUtils.h"
 #include "utils/DriveUtils.h"
 
@@ -38,6 +39,8 @@ private slots:
     void onScanFinished(const std::vector<ScanResult>& results);
     void onOverviewClicked();
     void onContentClicked();
+    void onOllamaResult(const QString& path, const QString& category);
+    void onOllamaFinished();
 
 private:
     // UI 元件 
@@ -62,8 +65,9 @@ private:
     FileClassifier  classifier_;   // 分類引擎（值，不是指標）
     SizeCalculator* sizeCalculator_; // 大小計算器
     // SizeCalculator 繼承 QObject，QObject 不能複製，只能用指標
-    CacheManager*   cacheManager_; // 快取管理器
-    ScanWorker*     scanWorker_;   // 掃描工作執行緒
+    CacheManager*      cacheManager_;     // 快取管理器
+    ScanWorker*        scanWorker_;       // 掃描工作執行緒
+    OllamaClassifier*  ollamaClassifier_; // AI 分類器
 
     // 函式
     void setupUI();

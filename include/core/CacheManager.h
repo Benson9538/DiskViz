@@ -38,6 +38,9 @@ public:
     // 檢查是否有 cache
     bool hasCache(const QString& rootPath);
 
+    // 更新單筆項目的分類（Ollama 分類完成後呼叫）
+    void updateCategory(const QString& path, const QString& category);
+
 private:
     QSqlDatabase db_;
     // 建立資料表(如果不存在)

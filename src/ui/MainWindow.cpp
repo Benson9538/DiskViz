@@ -26,6 +26,7 @@ MainWindow::MainWindow(QWidget* parent)
     , sizeCalculator_(new SizeCalculator(this))
     , cacheManager_(new CacheManager(this))
     , scanWorker_(new ScanWorker(this))
+    , ollamaClassifier_(new OllamaClassifier(this))
 {
     setWindowTitle("DiskViz");
     resize(1280, 800);
@@ -33,6 +34,11 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(scanWorker_, &ScanWorker::scanFinished,
             this,        &MainWindow::onScanFinished);
+
+    connect(ollamaClassifier_, &OllamaClassifier::resultReady,
+            this,              &MainWindow::onOllamaResult);
+    connect(ollamaClassifier_, &OllamaClassifier::finished,
+            this,              &MainWindow::onOllamaFinished);
 
     if(!cacheManager_->init()){
         statusLabel_->setText("快取初始化失敗");
@@ -124,6 +130,24 @@ void MainWindow::onScanFinished(const vector<ScanResult>& results)
                         .toString("yyyy/MM/dd hh:mm:ss");
     statusLabel_->setText("已更新 :" + timeStr);
     scanButton_->setEnabled(true);
+
+    // 收集所有 "未知" 分類的項目，送給 Ollama 做 AI 分類
+    std::vector<ClassifyRequest> unknowns;
+    for (const auto& r : results) {
+        if (r.category == "未知") {
+            ClassifyRequest req;
+            req.path     = r.path.string();
+            req.filename = r.path.filename().string();
+            unknowns.push_back(req);
+        }
+    }
+
+    if (!unknowns.empty()) {
+        statusLabel_->setText(
+            "已更新 :" + timeStr +
+            QString("　AI 分類中（%1 個未知項目）...").arg(unknowns.size()));
+        ollamaClassifier_->classify(unknowns);
+    }
 }
 
 void MainWindow::setupUI()
@@ -668,6 +692,29 @@ void MainWindow::onSizeReady(const QString& path, qint64 size)
         statusLabel_->setText("掃描完成");
         scanButton_->setEnabled(true);
     }
+}
+
+void MainWindow::onOllamaResult(const QString& path, const QString& category)
+{
+    // 在樹狀清單中找到這個路徑的項目，更新它的分類欄位
+    QTreeWidgetItem* item = findItemByPath(path);
+    if (item) {
+        item->setText(2, category);
+    }
+
+    // 同步更新 SQLite 快取，下次開啟程式就直接顯示正確分類
+    cacheManager_->updateCategory(path, category);
+}
+
+void MainWindow::onOllamaFinished()
+{
+    // Ollama 全部跑完，更新狀態列
+    QString timeStr = QDateTime::currentDateTime()
+                        .toString("yyyy/MM/dd hh:mm:ss");
+    statusLabel_->setText("AI 分類完成 :" + timeStr);
+
+    // 重新套用目前的類別篩選（有些項目的分類改變了）
+    onCategoryChanged(categoryList_->currentRow());
 }
 
 void MainWindow::onCategoryChanged(int row)
