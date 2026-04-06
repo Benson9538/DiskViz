@@ -77,6 +77,7 @@ void MainWindow::loadFromCacheAndScan()
 
     if(hasAnyCache){
         populateTreeWithGroups(cachedResults);
+        updateChart(cachedResults);
         onCategoryChanged(categoryList_->currentRow());
 
         QString timeStr = oldestScanTime.toString("yyyy/MM/dd hh:mm:ss");
@@ -90,9 +91,11 @@ void MainWindow::loadFromCacheAndScan()
 
 void MainWindow::onScanFinished(const vector<ScanResult>& results)
 {
+    updateChart(results);
     // 更新畫面
     contentTree_->clear();
     populateTreeWithGroups(results);
+    updateChart(results);
     onCategoryChanged(categoryList_->currentRow());
 
     auto scanPaths = getSelectedScanPaths();
@@ -131,7 +134,13 @@ void MainWindow::setupUI()
     setCentralWidget(splitter_);
 
     setupSidebar();
-    setupContentArea();
+
+    pageStack_ = new QStackedWidget(splitter_);
+
+    setupOverviewPage(); // idx 0
+    setupContentPage();  // idx 1
+
+    pageStack_->setCurrentIndex(1); // 預設顯示頁
 
     // setStretchFactor(index, factor)：設定初始比例
     // 左側 1：右側 4
@@ -149,6 +158,24 @@ void MainWindow::setupSidebar()
     QLabel* appName = new QLabel("DiskViz");
     appName->setStyleSheet("font-size: 20px; font-weight: bold;");
     layout->addWidget(appName);
+
+    // 頁面切換按鈕
+    QHBoxLayout* btnLayout = new QHBoxLayout();
+    btnOverview_ = new QPushButton("總覽");
+    btnContent_ = new QPushButton("內容");
+
+    btnOverview_->setCheckable(true); // 可呈現按下的狀態
+    btnContent_->setCheckable(true);
+    btnContent_->setChecked(true);   // 預設選中頁
+
+    btnLayout->addWidget(btnOverview_);
+    btnLayout->addWidget(btnContent_);
+    layout->addLayout(btnLayout);
+
+    connect(btnOverview_, &QPushButton::clicked,
+            this,         &MainWindow::onOverviewClicked);
+    connect(btnContent_,  &QPushButton::clicked,
+            this,         &MainWindow::onContentClicked);
 
     // 掃描位置區塊
     QLabel* scanTitle = new QLabel("掃描位置");
@@ -245,10 +272,51 @@ void MainWindow::setupSidebar()
             this,          &MainWindow::onCategoryChanged);
 }
 
-void MainWindow::setupContentArea()
+void MainWindow::setupOverviewPage()
 {
-    QWidget* contentArea = new QWidget(splitter_);
-    QVBoxLayout* layout = new QVBoxLayout(contentArea);
+    QWidget* overviewPage = new QWidget();
+    QVBoxLayout* layout = new QVBoxLayout(overviewPage);
+    layout->setContentsMargins(8,8,8,8);
+    
+    QLabel* title = new QLabel("使用空間總覽");
+    title->setStyleSheet("font-size: 20px; font-weight: bold;");
+    layout->addWidget(title);
+
+    // 圓餅圖
+    pieSeries_ = new QPieSeries();
+    pieSeries_->append("尚無資料", 1);
+
+    chart_ = new QChart();
+    chart_->addSeries(pieSeries_);
+    chart_->setTitle("掃描後自動更新");
+    chart_->legend()->show();
+    chart_->legend()->setAlignment(Qt::AlignRight);
+
+    chartView_ = new QChartView(chart_);
+    chartView_->setRenderHint(QPainter::Antialiasing);
+
+    QLabel* warning = new QLabel(
+        "以下數據根據常用路徑估算，並非磁碟完整使用量");
+    warning->setStyleSheet(
+        "color: #e67e00;"
+        "font-size: 18px;"
+        "font-weight: bold;"
+        "padding: 8px 12px;"
+        "background: #fff8e1;"
+        "border-left: 4px solid #e67e00;"
+        "border-radius: 4px;");
+    warning->setWordWrap(true);
+
+    layout->addWidget(warning);
+    layout->addWidget(chartView_);
+
+    pageStack_->addWidget(overviewPage);
+}
+
+void MainWindow::setupContentPage()
+{
+    QWidget* contentPage = new QWidget();
+    QVBoxLayout* layout = new QVBoxLayout(contentPage);
     layout->setContentsMargins(8, 8, 8, 8);
 
     QLabel* title = new QLabel("使用者內容");
@@ -277,6 +345,8 @@ void MainWindow::setupContentArea()
     // 使用者展開資料夾時觸發
     connect(contentTree_, &QTreeWidget::itemExpanded,
             this,         &MainWindow::onItemExpanded);
+
+    pageStack_->addWidget(contentPage);
 }
 
 vector<fs::path> MainWindow::getSelectedScanPaths()
@@ -424,6 +494,58 @@ void MainWindow::populateTreeWithGroups(
                 r.path.string()));
         }
     }   
+}
+
+void MainWindow::onOverviewClicked()
+{
+    pageStack_->setCurrentIndex(0);
+    btnOverview_->setChecked(true);
+    btnContent_->setChecked(false);
+}
+
+void MainWindow::onContentClicked()
+{
+    pageStack_->setCurrentIndex(1);
+    btnContent_->setChecked(true);
+    btnOverview_->setChecked(false);
+}
+
+void MainWindow::updateChart(const vector<ScanResult>& results)
+{
+    map<string, qint64> categoryTotals;
+    for(const auto& r : results){
+        categoryTotals[r.category] += r.totalSize;
+    }
+
+    pieSeries_->clear();
+
+    for(const auto& [cat, size] : categoryTotals){
+        if(size <= 0) continue;
+        pieSeries_->append(QString::fromStdString(cat), size);
+    }
+
+    for(auto& slice : pieSeries_->slices()){        
+        slice->setLabelVisible(true);
+        slice->setLabelPosition(QPieSlice::LabelOutside);
+        slice->setLabel(
+            slice->label() + "\n" +
+            QString::fromStdString(FormatUtils::formatSize(slice->value())) +
+            QString("\n%1%").arg(slice->percentage() * 100, 0, 'f', 1)
+        );
+        QFont font;
+        font.setPointSize(9);
+        font.setBold(true);
+        slice->setLabelFont(font);
+
+        if(slice->percentage() < 0.03) slice->setLabelVisible(false);
+    }
+    QFont titleFont;
+    titleFont.setPointSize(14);
+    titleFont.setBold(true);
+    chart_->setTitleFont(titleFont);
+    chart_->setTitle("使用空間總覽");
+    chart_->setBackgroundVisible(false);
+    chart_->legend()->hide();
 }
 
 void MainWindow::onItemExpanded(QTreeWidgetItem* item)

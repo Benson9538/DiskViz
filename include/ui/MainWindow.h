@@ -9,6 +9,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QSplitter>      // 可拖動的左右分割器
+#include <QStackedWidget>    // 堆疊式元件，用於切換頁面
+#include <QtCharts>
 
 #include "core/FileScanner.h"
 #include "core/FileClassifier.h"
@@ -34,16 +36,26 @@ private slots:
     void onCategoryChanged(int row);
     void onItemExpanded(QTreeWidgetItem* item);
     void onScanFinished(const std::vector<ScanResult>& results);
+    void onOverviewClicked();
+    void onContentClicked();
 
 private:
     // UI 元件 
-    QWidget*     sidebar_;        // 左側導覽列容器
-    QListWidget* scanPathList_;   // 掃描路徑勾選清單
-    QListWidget* categoryList_;   // 類別篩選清單
-    QSplitter*   splitter_;       // 左右分割器
-    QTreeWidget* contentTree_;    // 右側內容樹狀清單
-    QPushButton* scanButton_;     // 掃描按鈕
-    QLabel*      statusLabel_;    // 底部狀態文字
+    QWidget*        sidebar_;         // 左側導覽列容器
+    QListWidget*    scanPathList_;    // 掃描路徑勾選清單
+    QListWidget*    categoryList_;    // 類別篩選清單
+    QSplitter*      splitter_;        // 左右分割器
+    QTreeWidget*    contentTree_;     // 右側內容樹狀清單
+    QPushButton*    scanButton_;      // 掃描按鈕
+    QLabel*         statusLabel_;     // 底部狀態文字
+    QStackedWidget* pageStack_;       // 頁面切換容器
+    QPushButton*    btnOverview_;     // 總覽按鈕
+    QPushButton*    btnContent_;      // 內容按鈕
+
+    // 圓餅圖
+    QChartView*     chartView_;
+    QChart*         chart_;
+    QPieSeries*     pieSeries_;
 
     // 核心模組
     FileScanner     scanner_;      // 檔案掃描器（值，不是指標）
@@ -56,10 +68,12 @@ private:
     // 函式
     void setupUI();
     void setupSidebar();
-    void setupContentArea();
+    void setupContentPage();
     void populateTree(const std::vector<ScanEntry>& entries);
     void loadFromCacheAndScan();
     void populateTreeWithGroups(const std::vector<ScanResult>& results);
+    void setupOverviewPage();
+    void updateChart(const std::vector<ScanResult>& results);
 
     // 取得目前勾選的掃描路徑清單
     std::vector<fs::path> getSelectedScanPaths();
