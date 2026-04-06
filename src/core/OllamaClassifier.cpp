@@ -2,17 +2,53 @@
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QNetworkRequest>
+#include <QCoreApplication>
 #include <QUrl>
 #include <algorithm>
 #include <iostream>
 
-// qgetenv：讀取環境變數，回傳 QByteArray
-// 若環境變數未設定，使用預設值（WSL → Windows 的固定 IP）
-static QString ollamaUrl() {
-    QByteArray host = qgetenv("OLLAMA_HOST");
-    if (!host.isEmpty())
-        return QString::fromUtf8(host) + "/api/generate";
-    return "http://172.25.112.1:11434/api/generate";
+// 從 .env 檔案讀取指定 key 的值
+// 格式：KEY=value（每行一個，# 開頭為註解）
+static QString readDotEnv(const QString& key)
+{
+    // 用執行檔所在目錄找 .env，不受工作目錄影響
+    QString envPath = QCoreApplication::applicationDirPath() + "/.env";
+    QFile file(envPath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return {};
+
+    QTextStream in(&file);
+    while (!in.atEnd()) {
+        QString line = in.readLine().trimmed();
+        if (line.startsWith('#') || !line.contains('=')) continue;
+
+        int eq = line.indexOf('=');
+        if (line.left(eq).trimmed() == key) {
+            QString val = line.mid(eq + 1).trimmed();
+            // 移除前後的引號（"value" 或 'value'）
+            if ((val.startsWith('"') && val.endsWith('"')) ||
+                (val.startsWith('\'') && val.endsWith('\'')))
+                val = val.mid(1, val.length() - 2);
+            return val;
+        }
+    }
+    return {};
+}
+
+// 優先讀系統環境變數，其次讀 .env，都沒有就回傳空字串
+static QString ollamaUrl()
+{
+    // qgetenv：讀取系統環境變數
+    QByteArray envHost = qgetenv("OLLAMA_HOST");
+    if (!envHost.isEmpty())
+        return QString::fromUtf8(envHost) + "/api/generate";
+
+    // 從 .env 讀取
+    QString dotEnvHost = readDotEnv("OLLAMA_HOST");
+    if (!dotEnvHost.isEmpty())
+        return dotEnvHost + "/api/generate";
+
+    return {};  // 都找不到，回傳空字串讓呼叫端報錯
 }
 
 static const QString OLLAMA_MODEL = "llama3.2";
@@ -30,6 +66,12 @@ void OllamaClassifier::classify(const std::vector<ClassifyRequest>& requests)
         return;
     }
 
+    if (ollamaUrl().isEmpty()) {
+        // OLLAMA_HOST 未設定，靜默略過，項目保留「未知」分類
+        emit finished();
+        return;
+    }
+
     pending_           = requests;
     completedBatches_  = 0;
 
@@ -38,7 +80,7 @@ void OllamaClassifier::classify(const std::vector<ClassifyRequest>& requests)
     totalBatches_ = ((int)pending_.size() + batchSize_ - 1) / batchSize_;
 
     std::cout << "[Ollama] 開始分類，共 " << pending_.size()
-              << " 個項目，" << totalBatches_ << " 批\n";
+                << " 個項目，" << totalBatches_ << " 批\n";
 
     sendBatch(0);  // 從第 0 批開始，結果回來後再送下一批（sequential）
 }
@@ -55,16 +97,17 @@ void OllamaClassifier::sendBatch(int batchIndex)
         pending_.begin() + end);
 
     // ── 組建 Prompt ──────────────────────────────────────
-    // 用英文下指令（模型遵循率更高），但限制只能輸出我們定義的中文分類
-    // 給 few-shot 範例讓模型學習輸出格式
+    // 明確告訴 AI 輸出格式，減少不符合格式的回答
     QString prompt =
-        "Classify each file by its filename. "
-        "Choose ONLY from: 遊戲, 工作, 影片, 圖片, 文件, 音樂, 壓縮檔, 應用程式, 程式碼, 下載, 未知\n"
-        "Output ONLY lines in format: NUMBER:CATEGORY (no spaces, no explanation)\n"
-        "Example:\n"
+        "你是檔案分類系統，只能用繁體中文分類。\n"
+        "將以下檔案分類為以下類別之一：\n"
+        "遊戲, 工作, 影片, 圖片, 文件, 音樂, 壓縮檔, 應用程式, 程式碼, 下載, 未知\n\n"
+        "輸出格式（每行一個，不要任何說明）：\n"
+        "編號:類別\n\n"
+        "範例：\n"
         "1:影片\n"
-        "2:遊戲\n"
-        "Files:\n";
+        "2:遊戲\n\n"
+        "待分類檔案：\n";
 
     for (int i = 0; i < (int)batch.size(); ++i) {
         prompt += QString("%1. %2\n")
@@ -78,7 +121,7 @@ void OllamaClassifier::sendBatch(int batchIndex)
     body["prompt"] = prompt;
     body["stream"] = false;  // 等全部生成完才回傳，不要逐字 stream
 
-    QUrl url(ollamaUrl());  // 先建 QUrl，避免 most vexing parse
+    QUrl url(ollamaUrl());
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
@@ -161,37 +204,26 @@ void OllamaClassifier::parseBatchResponse(const QByteArray& data,
 
 QString OllamaClassifier::normalizeCategory(const QString& raw)
 {
-    // Ollama 有時用英文、有時用中文，大小寫也不固定
-    // 全部 toLower 後做關鍵字比對，轉成系統統一的中文分類名稱
-    // 順序很重要：越具體的放越前面，避免被模糊匹配搶走
+    // Ollama 可能回傳各種變體（英文/中文/大小寫不同）
+    // 全部轉成我們系統使用的中文分類名稱
     QString s = raw.toLower().trimmed();
 
-    // 程式碼要在應用程式之前，避免 "code" 被 "app" 以外的條件截走
-    if (s.contains("程式碼") || s.contains("code") ||
-        s.contains("source") || s.contains("programming"))     return "程式碼";
-
     if (s.contains("遊戲") || s.contains("game"))              return "遊戲";
-    if (s.contains("工作") || s.contains("work") ||
-        s.contains("office") || s.contains("business"))        return "工作";
-    if (s.contains("影片") || s.contains("video") ||
-        s.contains("movie") || s.contains("film"))             return "影片";
+    if (s.contains("工作") || s.contains("work"))              return "工作";
+    if (s.contains("影片") || s.contains("video"))             return "影片";
     if (s.contains("圖片") || s.contains("image") ||
-        s.contains("photo") || s.contains("picture"))          return "圖片";
+        s.contains("photo"))                                    return "圖片";
     if (s.contains("文件") || s.contains("document") ||
-        s.contains("doc") || s.contains("file") ||
-        s.contains("spreadsheet"))                             return "文件";
+        s.contains("doc"))                                      return "文件";
     if (s.contains("音樂") || s.contains("music") ||
-        s.contains("audio") || s.contains("sound"))            return "音樂";
+        s.contains("audio"))                                    return "音樂";
     if (s.contains("壓縮") || s.contains("archive") ||
-        s.contains("zip") || s.contains("compress"))           return "壓縮檔";
+        s.contains("zip"))                                      return "壓縮檔";
     if (s.contains("應用") || s.contains("application") ||
-        s.contains("software") || s.contains("app") ||
-        s.contains("程式"))                                    return "應用程式";
+        s.contains("app") || s.contains("程式"))               return "應用程式";
+    if (s.contains("程式碼") || s.contains("code") ||
+        s.contains("source"))                                   return "程式碼";
     if (s.contains("下載") || s.contains("download"))          return "下載";
-
-    // 明確的 unknown 也對應回去
-    if (s.contains("unknown") || s.contains("未知") ||
-        s.contains("other") || s.contains("misc"))             return "未知";
 
     return "未知";
 }

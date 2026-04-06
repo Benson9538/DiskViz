@@ -9,7 +9,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Charts Sql Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Charts Sql Network Concurrent)
 
 add_executable(DiskViz
     src/main.cpp
@@ -31,6 +31,7 @@ target_link_libraries(DiskViz PRIVATE
     Qt6::Charts
     Qt6::Sql
     Qt6::Network
+    Qt6::Concurrent
 )
 
 target_include_directories(DiskViz PRIVATE

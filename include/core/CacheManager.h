@@ -41,6 +41,9 @@ public:
     // 更新單筆項目的分類（Ollama 分類完成後呼叫）
     void updateCategory(const QString& path, const QString& category);
 
+    // 更新單筆項目的大小（SizeCalculator 算完後呼叫）
+    void updateSize(const QString& path, qint64 size);
+
 private:
     QSqlDatabase db_;
     // 建立資料表(如果不存在)

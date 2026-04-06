@@ -36,6 +36,7 @@ private slots:
     void onSizeReady(const QString& path, qint64 size);
     void onCategoryChanged(int row);
     void onItemExpanded(QTreeWidgetItem* item);
+    void onScanResultReady(const ScanResult& result);
     void onScanFinished(const std::vector<ScanResult>& results);
     void onOverviewClicked();
     void onContentClicked();
@@ -84,6 +85,11 @@ private:
 
 
     // 遞迴搜尋整棵樹，找到路徑對應的項目
-    // 用於 onSizeReady 更新任意層級的大小顯示
     QTreeWidgetItem* findItemByPath(const QString& path);
+
+    // 找到或建立指定 rootPath 的分組標題列
+    QTreeWidgetItem* findOrCreateGroupHeader(const fs::path& rootPath);
+
+    // 把單筆 ScanResult 加入 Tree（增量更新用）
+    void appendResultToTree(const ScanResult& r);
 };

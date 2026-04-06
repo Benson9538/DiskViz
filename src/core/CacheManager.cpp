@@ -212,6 +212,23 @@ bool CacheManager::hasCache(const QString& rootPath)
     return false;
 }
 
+void CacheManager::updateSize(const QString& path, qint64 size)
+{
+    QSqlQuery query(db_);
+    query.prepare(R"(
+        UPDATE scan_entries
+        SET size = :size
+        WHERE path = :path
+    )");
+    query.bindValue(":size", size);
+    query.bindValue(":path", path);
+
+    if (!query.exec()) {
+        cerr << "[CacheManager] updateSize 失敗: "
+             << query.lastError().text().toStdString() << "\n";
+    }
+}
+
 void CacheManager::updateCategory(const QString& path, const QString& category)
 {
     QSqlQuery query(db_);

@@ -32,6 +32,8 @@ MainWindow::MainWindow(QWidget* parent)
     resize(1280, 800);
     setupUI();
 
+    connect(scanWorker_, &ScanWorker::scanResultReady,
+            this,        &MainWindow::onScanResultReady);
     connect(scanWorker_, &ScanWorker::scanFinished,
             this,        &MainWindow::onScanFinished);
 
@@ -95,12 +97,65 @@ void MainWindow::loadFromCacheAndScan()
     scanWorker_->scan(scanPaths);
 }
 
+QTreeWidgetItem* MainWindow::findOrCreateGroupHeader(const fs::path& rootPath)
+{
+    QString name = QString::fromStdString(rootPath.filename().string());
+
+    // 搜尋是否已有這個 rootPath 的標題列
+    for (int i = 0; i < contentTree_->topLevelItemCount(); ++i) {
+        QTreeWidgetItem* item = contentTree_->topLevelItem(i);
+        if (item->text(0) == name)
+            return item;
+    }
+
+    // 沒有就建立新的
+    QTreeWidgetItem* header = new QTreeWidgetItem(contentTree_);
+    header->setText(0, name);
+    header->setFirstColumnSpanned(true);
+    header->setBackground(0, QColor(230, 230, 230));
+    header->setFlags(header->flags() & ~Qt::ItemIsSelectable);
+    QFont font; font.setBold(true);
+    header->setFont(0, font);
+    header->setExpanded(true);
+    return header;
+}
+
+void MainWindow::appendResultToTree(const ScanResult& r)
+{
+    QTreeWidgetItem* header = findOrCreateGroupHeader(r.rootPath);
+
+    // 移除 loading 佔位符（第一個子項目若是「掃描中...」就刪掉）
+    if (header->childCount() == 1 &&
+        header->child(0)->text(0) == "掃描中...")
+        delete header->takeChild(0);
+
+    QTreeWidgetItem* item = new SortableTreeItem(header);
+    item->setText(0, QString::fromStdString(r.path.filename().string()));
+
+    if (r.isDirectory) {
+        item->setText(1, "計算中...");
+        item->setData(1, Qt::UserRole, QVariant::fromValue((qint64)0));
+        item->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
+    } else {
+        item->setText(1, QString::fromStdString(FormatUtils::formatSize(r.totalSize)));
+        item->setData(1, Qt::UserRole, QVariant::fromValue(r.totalSize));
+    }
+
+    item->setText(2, QString::fromStdString(r.category));
+    item->setText(3, QString::fromStdString(r.path.string()));
+}
+
+void MainWindow::onScanResultReady(const ScanResult& r)
+{
+    appendResultToTree(r);
+    // onCategoryChanged 不在這裡呼叫
+    // 每筆都呼叫會讓主執行緒在 D 槽這種大目錄下被塞爆
+    // 改為只在 onScanFinished 最後套用一次
+}
+
 void MainWindow::onScanFinished(const vector<ScanResult>& results)
 {
-    updateChart(results);
-    // 更新畫面
-    contentTree_->clear();
-    populateTreeWithGroups(results);
+    // Tree 已由 onScanResultReady 增量填好，這裡只更新圖表和狀態
     updateChart(results);
     onCategoryChanged(categoryList_->currentRow());
 
@@ -147,6 +202,40 @@ void MainWindow::onScanFinished(const vector<ScanResult>& results)
             "已更新 :" + timeStr +
             QString("　AI 分類中（%1 個未知項目）...").arg(unknowns.size()));
         ollamaClassifier_->classify(unknowns);
+    }
+
+    // 收集所有目錄，背景計算大小（不阻塞 finished 的觸發）
+    std::vector<fs::path> dirs;
+    for (const auto& r : results)
+        if (r.isDirectory) dirs.push_back(r.path);
+
+    if (!dirs.empty()) {
+        SizeCalculator* calc = new SizeCalculator(this);
+
+        connect(calc, &SizeCalculator::sizeReady, this,
+            [this](const QString& path, qint64 size) {
+                // 更新 Tree
+                QTreeWidgetItem* item = findItemByPath(path);
+                if (item && item->text(1) == "計算中...") {
+                    item->setText(1, QString::fromStdString(
+                        FormatUtils::formatSize(size)));
+                    item->setData(1, Qt::UserRole,
+                        QVariant::fromValue(size));
+                }
+                // 更新快取，下次載入時顯示正確大小
+                cacheManager_->updateSize(path, size);
+            });
+
+        connect(calc, &SizeCalculator::finished, this, [this, calc]() {
+            calc->deleteLater();
+            statusLabel_->setText(
+                "大小計算完成 : " +
+                QDateTime::currentDateTime().toString("yyyy/MM/dd hh:mm:ss"));
+            scanButton_->setEnabled(true);
+        });
+
+        calc->addPaths(dirs);
+        calc->start();
     }
 }
 
@@ -396,18 +485,35 @@ vector<fs::path> MainWindow::getSelectedScanPaths()
 
 void MainWindow::onScanClicked()
 {
-    statusLabel_->setText("掃描中...");
-    scanButton_->setEnabled(false);
-
     auto scanPaths = getSelectedScanPaths();
 
-    // 沒有選任何路徑就提示使用者
     if (scanPaths.empty()) {
         statusLabel_->setText("請至少選擇一個掃描位置");
-        scanButton_->setEnabled(true);
         return;
     }
 
+    // 清空舊內容，為每個掃描路徑建立 loading 標題列
+    contentTree_->clear();
+    for (const auto& path : scanPaths) {
+        QTreeWidgetItem* header = new QTreeWidgetItem(contentTree_);
+        header->setText(0, QString::fromStdString(path.filename().string()));
+        header->setFirstColumnSpanned(true);
+        header->setBackground(0, QColor(230, 230, 230));
+        header->setFlags(header->flags() & ~Qt::ItemIsSelectable);
+        QFont font; font.setBold(true);
+        header->setFont(0, font);
+        header->setExpanded(true);
+
+        // 暫時的 loading 子項目
+        QTreeWidgetItem* loading = new QTreeWidgetItem(header);
+        loading->setText(0, "掃描中...");
+        loading->setFirstColumnSpanned(true);
+        loading->setForeground(0, QColor(150, 150, 150));
+        loading->setFlags(loading->flags() & ~Qt::ItemIsSelectable);
+    }
+
+    statusLabel_->setText("掃描中...");
+    scanButton_->setEnabled(false);
     scanWorker_->scan(scanPaths);
 }
 
@@ -491,31 +597,16 @@ void MainWindow::populateTreeWithGroups(
         });
         
         for(const auto& r : group){
-            FileEntry fe{r.path, (uintmax_t)r.totalSize, r.extension};
-            Category cat = classifier_.classify(fe);
-
             QTreeWidgetItem* item = new SortableTreeItem(header);
-            item->setText(0, QString::fromStdString(
-                r.path.filename().string()));
-            
-            if(r.isDirectory){
-                item->setText(1, QString::fromStdString(
-                    FormatUtils::formatSize(r.totalSize)));
-                item->setData(1, Qt::UserRole, 
-                    QVariant::fromValue(r.totalSize));
-                item->setChildIndicatorPolicy(
-                    QTreeWidgetItem::ShowIndicator);
-            }
-            else {
-                item->setText(1, QString::fromStdString(
-                    FormatUtils::formatSize(r.totalSize)));
-                item->setData(1, Qt::UserRole, 
-                    QVariant::fromValue(r.totalSize));
-            }
-            item->setText(2, QString::fromStdString(
-                categoryToString(cat)));
-            item->setText(3, QString::fromStdString(
-                r.path.string()));
+            item->setText(0, QString::fromStdString(r.path.filename().string()));
+            item->setText(1, QString::fromStdString(FormatUtils::formatSize(r.totalSize)));
+            item->setData(1, Qt::UserRole, QVariant::fromValue(r.totalSize));
+            // 直接用 r.category，保留快取中 Ollama 分類過的結果
+            item->setText(2, QString::fromStdString(r.category));
+            item->setText(3, QString::fromStdString(r.path.string()));
+
+            if(r.isDirectory)
+                item->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
         }
     }   
 }
@@ -719,7 +810,6 @@ void MainWindow::onOllamaFinished()
 
 void MainWindow::onCategoryChanged(int row)
 {
-    // 對應左側類別清單的順序
     const QStringList categories = {
         "", // 全部
         "遊戲", "工作", "影片", "圖片",
@@ -729,17 +819,23 @@ void MainWindow::onCategoryChanged(int row)
 
     QString selected = categories[row];
 
+    // 頂層是灰色分組標題列（Documents / Downloads...），不是實際檔案
+    // 實際檔案是標題列的子節點，要對子節點做篩選
     for (int i = 0; i < contentTree_->topLevelItemCount(); ++i) {
-        QTreeWidgetItem* item = contentTree_->topLevelItem(i);
+        QTreeWidgetItem* header = contentTree_->topLevelItem(i);
 
-        if (selected.isEmpty()) {
-            // 全部：顯示所有項目
-            item->setHidden(false);
-        } else {
-            // setHidden(true)：隱藏不符合類別的項目
-            // text(2) : 類別
-            item->setHidden(item->text(2) != selected);
+        bool anyVisible = false;
+
+        for (int j = 0; j < header->childCount(); ++j) {
+            QTreeWidgetItem* child = header->child(j);
+
+            bool show = selected.isEmpty() || child->text(2) == selected;
+            child->setHidden(!show);
+            if (show) anyVisible = true;
         }
+
+        // 標題列底下全部被篩掉時，標題列本身也隱藏
+        header->setHidden(!anyVisible);
     }
 }
 

@@ -29,7 +29,7 @@ qint64 ScanWorkerImpl::calculateDirSize(const fs::path& path)
 }
 
 void ScanWorkerImpl::run()
-{   
+{
     vector<ScanResult> results;
 
     for(const auto& path : paths_){
@@ -37,21 +37,23 @@ void ScanWorkerImpl::run()
 
         for(const auto& e : entries){
             ScanResult r;
-            r.rootPath = path;  
-            r.path = e.path;
+            r.rootPath    = path;
+            r.path        = e.path;
             r.isDirectory = e.isDirectory;
-            r.extension = e.extension;
-            
-            if(e.isDirectory) r.totalSize = calculateDirSize(e.path);
-            else r.totalSize = static_cast<qint64>(e.totalSize);
+            r.extension   = e.extension;
+            r.totalSize   = e.isDirectory ? 0
+                            : static_cast<qint64>(e.totalSize);
 
-            FileEntry fe {e.path, (uintmax_t)e.totalSize, e.extension};
+            FileEntry fe{e.path, (uintmax_t)e.totalSize, e.extension};
             r.category = categoryToString(classifier_.classify(fe));
 
             results.push_back(r);
-        } 
+            emit resultReady(r);
+        }
     }
-    // 結束後發射 finished signal，傳遞結果給 MainWindow
+
+    // 大小計算不在這裡做，交給 MainWindow 的 SizeCalculator 背景處理
+    // 這樣 finished 可以快速觸發，不被大型目錄卡住
     emit finished(results);
 }
 
@@ -76,22 +78,27 @@ void ScanWorker::scan(const vector<fs::path>& paths)
         thread_->wait();
     }
 
+    // thread_->started 可能還有舊 impl 的連接殘留
+    // 只斷開連接，不手動 delete——舊 impl 已透過 deleteLater 排程釋放
+    // 若手動 delete 會造成雙重釋放（double-free）→ Segmentation fault
+    disconnect(thread_, &QThread::started, nullptr, nullptr);
+
     impl_ = new ScanWorkerImpl(paths);
     impl_->moveToThread(thread_);
 
-    
     connect(thread_, &QThread::started,
-            impl_, &ScanWorkerImpl::run);
-    
-    // 結果轉發出去
+            impl_,   &ScanWorkerImpl::run);
+
+    connect(impl_, &ScanWorkerImpl::resultReady,
+            this,  &ScanWorker::scanResultReady);
+
     connect(impl_, &ScanWorkerImpl::finished,
             this,  &ScanWorker::scanFinished);
 
-    // 清理
     connect(impl_,   &ScanWorkerImpl::finished,
             thread_, &QThread::quit);
-    connect(impl_,  &ScanWorkerImpl::finished,
-            impl_,  &QObject::deleteLater);
+    connect(impl_,   &ScanWorkerImpl::finished,
+            impl_,   &QObject::deleteLater);
 
     thread_->start();
 }

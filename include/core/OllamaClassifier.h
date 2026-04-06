@@ -3,6 +3,8 @@
 #include <QObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QFile>
+#include <QTextStream>
 #include <QString>
 #include <vector>
 

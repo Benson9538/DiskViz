@@ -29,6 +29,7 @@ public slots:
     void run();
 
 signals:
+    void resultReady(const ScanResult& result);
     void finished(const std::vector<ScanResult>& results);
 
 private:
@@ -49,6 +50,7 @@ public:
     void scan(const std::vector<fs::path>& paths);
 
 signals:
+    void scanResultReady(const ScanResult& result);
     void scanFinished(const std::vector<ScanResult>& results);
 
 private:
