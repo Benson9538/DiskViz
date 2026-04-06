@@ -12,13 +12,14 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 
 add_executable(DiskVizTests
+    main.cpp
     test_FileClassifier.cpp
     test_FormatUtils.cpp
     test_CacheManager.cpp
 )
 
 target_link_libraries(DiskVizTests PRIVATE
-    GTest::gtest_main
+    GTest::gtest
     Qt6::Core
     Qt6::Sql
     # 直接連結 DiskViz 的核心原始碼（不是整個 executable）
